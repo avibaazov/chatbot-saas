@@ -79,3 +79,31 @@ async def test_missing_auth_returns_401():
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/bots")
     assert resp.status_code == 401
+
+
+async def test_allowed_domains_are_normalized_from_pasted_urls():
+    """Regression test: a user pasting a full URL copied from their browser's address
+    bar (e.g. "http://127.0.0.1:5500/demo/") must be stored as just the hostname[:port]
+    — the format a real Origin header takes — or the widget's origin check can never match.
+    """
+    async with _client_as(USER_A) as client:
+        resp = await client.post("/bots", json={"name": "Domain Bot"})
+        bot_id = resp.json()["id"]
+
+        resp = await client.put(
+            f"/bots/{bot_id}/allowed-domains",
+            json={"allowed_domains": ["http://127.0.0.1:5500/demo/", "example.com"]},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["allowed_domains"] == ["127.0.0.1:5500", "example.com"]
+
+
+async def test_invalid_allowed_domain_returns_400():
+    async with _client_as(USER_A) as client:
+        resp = await client.post("/bots", json={"name": "Domain Bot"})
+        bot_id = resp.json()["id"]
+
+        resp = await client.put(
+            f"/bots/{bot_id}/allowed-domains", json={"allowed_domains": [""]}
+        )
+        assert resp.status_code == 400

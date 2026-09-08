@@ -13,6 +13,7 @@ from pymongo import ReturnDocument
 from app.core.auth import get_current_clerk_user_id
 from app.core.db import get_db
 from app.models.bot import BotConfig, Bot
+from app.services.domains import extract_hostname
 from app.services.users import get_or_create_user
 
 router = APIRouter(prefix="/bots", tags=["bots"])
@@ -83,11 +84,21 @@ async def update_allowed_domains(
     body: UpdateAllowedDomainsRequest,
     clerk_user_id: str = Depends(get_current_clerk_user_id),
 ):
+    # Accept whatever format a human pastes (bare "example.com", "localhost:3000", or a
+    # full "http://example.com/path" copied from a browser bar) and normalize it to the
+    # plain hostname[:port] form the widget compares real Origin headers against.
+    normalized = []
+    for raw in body.allowed_domains:
+        hostname = extract_hostname(raw)
+        if not hostname:
+            raise HTTPException(status_code=400, detail=f"'{raw}' is not a valid domain")
+        normalized.append(hostname)
+
     db = get_db()
     user = await get_or_create_user(db.users, clerk_user_id)
     result = await db.bots.find_one_and_update(
         {"_id": ObjectId(bot_id), "owner_user_id": str(user["_id"])},
-        {"$set": {"allowed_domains": body.allowed_domains}},
+        {"$set": {"allowed_domains": normalized}},
         return_document=ReturnDocument.AFTER,
     )
     if not result:

@@ -17,14 +17,14 @@
     <code>&lt;script&gt;</code> tag, exactly like a real customer would embed it.
   </p>
   <p>
-    Click it and ask something like <em>"what are your hours?"</em> — it's backed by a
-    real bot with real (if minimal) training content in Atlas, going through the actual
-    public <code>/widget/{site_key}</code> API with origin-based auth, not a mock.
+    This is now pointed at <strong>your real dashboard bot</strong> (site key
+    <code>sk_pub_LMyaIWeCk6rPcVgDOxn44DA_KhUxLMIf</code>) — ask it the same question you
+    asked in the dashboard's Test chat box and compare the answers.
   </p>
 
   <script
-    src="../dist/widget.js"
-    data-bot-key="sk_pub_demo_widget_test"
+    src="http://127.0.0.1:5500/dist/widget.js"
+    data-bot-key="sk_pub_LMyaIWeCk6rPcVgDOxn44DA_KhUxLMIf"
     data-api-base="http://127.0.0.1:8002"
     async
   ></script>

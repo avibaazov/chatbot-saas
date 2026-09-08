@@ -13,14 +13,13 @@ mounted at /widget in main.py) that never gets that middleware attached. Every r
 here sets its own Access-Control-Allow-Origin, computed from the bot's allowed_domains.
 """
 
-from urllib.parse import urlparse
-
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.models.bot import BotConfig
+from app.services.domains import extract_hostname
 from app.services.embeddings import get_embeddings_provider
 from app.services.llm import get_llm_provider
 from app.services.rag import answer_question
@@ -32,19 +31,10 @@ router = APIRouter(prefix="/{site_key}", tags=["widget"])
 RATE_LIMIT_PER_MINUTE = 20
 
 
-def _origin_hostname(origin: str | None) -> str | None:
-    if not origin:
-        return None
-    parsed = urlparse(origin)
-    if not parsed.hostname:
-        return None
-    return parsed.hostname if not parsed.port else f"{parsed.hostname}:{parsed.port}"
-
-
 def _is_origin_allowed(origin: str | None, allowed_domains: list[str]) -> bool:
     if "*" in allowed_domains:
         return True
-    hostname = _origin_hostname(origin)
+    hostname = extract_hostname(origin) if origin else None
     return hostname is not None and hostname in allowed_domains
 
 

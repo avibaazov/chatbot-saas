@@ -10,10 +10,10 @@ python -m venv venv
 venv\Scripts\activate        # Windows
 pip install -e ".[dev]"
 copy .env.example .env       # then fill in MONGODB_URI etc.
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8001
 ```
 
-Health check: `GET http://127.0.0.1:8000/health`
+Health check: `GET http://127.0.0.1:8001/health`
 
 ## Test
 

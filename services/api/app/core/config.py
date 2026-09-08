@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     # Embeddings (§5 step 4). Empty => FakeEmbeddingsProvider is used (dev/test only).
     voyage_api_key: str = Field(default="")
 
+    # Clerk (§5 step 7/8). JWKS URL for verifying session tokens the dashboard sends.
+    # Derived from the Clerk publishable key's frontend-API domain — see
+    # app/core/auth.py. Not a secret (JWKS is public by design), but still env-only
+    # since it's per-environment (dev instance vs. prod instance have different domains).
+    clerk_jwks_url: str = Field(default="")
+
 
 @lru_cache
 def get_settings() -> Settings:

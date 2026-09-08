@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -6,7 +8,20 @@ from app.routes import health
 
 settings = get_settings()
 
-app = FastAPI(title="Chatbot API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Skip index creation when MONGODB_URI isn't set so the app still boots for local
+    # dev / the health check without a live cluster (see app/core/db.py).
+    if settings.mongodb_uri:
+        from app.core.db import get_db
+        from app.core.indexes import create_indexes
+
+        await create_indexes(get_db())
+    yield
+
+
+app = FastAPI(title="Chatbot API", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

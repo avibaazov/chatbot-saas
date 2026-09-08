@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # Anthropic / RAG — added when we build inference (§5 step 5)
     anthropic_api_key: str = Field(default="")
 
+    # Embeddings (§5 step 4). Empty => FakeEmbeddingsProvider is used (dev/test only).
+    voyage_api_key: str = Field(default="")
+
 
 @lru_cache
 def get_settings() -> Settings:

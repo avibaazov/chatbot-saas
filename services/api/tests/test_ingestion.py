@@ -3,7 +3,7 @@ import pytest
 from app.models.document import DocumentStatus
 from app.services.chunking import chunk_text
 from app.services.embeddings import FakeEmbeddingsProvider
-from app.services.ingestion import ingest_document
+from app.services.ingestion import ingest_document, ingest_url
 from app.services.queue import InMemoryQueue
 
 
@@ -18,7 +18,7 @@ class FakeDocumentsCollection:
 
     @property
     def statuses(self) -> list[str]:
-        return [u["status"] for u in self.updates]
+        return [u["status"] for u in self.updates if "status" in u]
 
 
 class FakeChunksCollection:
@@ -98,6 +98,55 @@ async def test_ingest_document_empty_text_marks_failed():
 
     assert documents_col.statuses == [DocumentStatus.processing, DocumentStatus.failed]
     assert documents_col.updates[-1]["error"]
+    assert chunks_col.inserted == []
+
+
+# --- URL ingestion ----------------------------------------------------------
+
+
+async def test_ingest_url_fetches_then_runs_pipeline_and_sets_title():
+    documents_col = FakeDocumentsCollection()
+    chunks_col = FakeChunksCollection()
+
+    async def fake_fetch(url):
+        assert url == "https://plants.example/care"
+        return "Fig Care Guide", "water it weekly. " * 200
+
+    await ingest_url(
+        documents_col=documents_col,
+        chunks_col=chunks_col,
+        document_id="doc1",
+        url="https://plants.example/care",
+        bot_id="bot1",
+        embeddings=FakeEmbeddingsProvider(),
+        fetch=fake_fetch,
+    )
+
+    assert {"filename": "Fig Care Guide"} in documents_col.updates
+    assert documents_col.statuses == [DocumentStatus.processing, DocumentStatus.ready]
+    assert len(chunks_col.inserted) > 1
+
+
+async def test_ingest_url_marks_failed_when_fetch_fails():
+    documents_col = FakeDocumentsCollection()
+    chunks_col = FakeChunksCollection()
+
+    async def failing_fetch(url):
+        raise RuntimeError("no readable text found — the page may need JavaScript to render")
+
+    with pytest.raises(RuntimeError):
+        await ingest_url(
+            documents_col=documents_col,
+            chunks_col=chunks_col,
+            document_id="doc1",
+            url="https://spa.example/",
+            bot_id="bot1",
+            embeddings=FakeEmbeddingsProvider(),
+            fetch=failing_fetch,
+        )
+
+    assert documents_col.statuses == [DocumentStatus.failed]
+    assert "JavaScript" in documents_col.updates[-1]["error"]
     assert chunks_col.inserted == []
 
 

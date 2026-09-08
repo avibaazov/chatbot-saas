@@ -8,12 +8,15 @@ stand-ins — see tests/test_ingestion.py — without a live Atlas cluster.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import Any, Awaitable, Callable, Protocol
 
 from app.models.chunk import Chunk
 from app.models.document import DocumentStatus
 from app.services.chunking import chunk_text
 from app.services.embeddings import EmbeddingsProvider
+
+# (title, main_text) for a URL — the shape of app.services.web_fetch.fetch_url.
+UrlFetcher = Callable[[str], Awaitable[tuple[str, str]]]
 
 
 class SupportsUpdateOne(Protocol):
@@ -77,6 +80,42 @@ async def ingest_document(
             },
         )
         raise
+
+
+async def ingest_url(
+    *,
+    documents_col: SupportsUpdateOne,
+    chunks_col: SupportsInsertMany,
+    document_id,
+    url: str,
+    bot_id: str,
+    embeddings: EmbeddingsProvider,
+    fetch: UrlFetcher,
+) -> None:
+    """Fetch `url`, then run the same chunk -> embed -> upsert pipeline as ingest_document.
+    A fetch failure is recorded as status=failed (with the reason) before re-raising, so a
+    dead link doesn't leave the document stuck on "pending".
+    """
+    try:
+        title, text = await fetch(url)
+    except Exception as exc:
+        await documents_col.update_one(
+            {"_id": document_id},
+            {"$set": {"status": DocumentStatus.failed, "error": str(exc), "updated_at": _now()}},
+        )
+        raise
+
+    if title:
+        await documents_col.update_one({"_id": document_id}, {"$set": {"filename": title}})
+
+    await ingest_document(
+        documents_col=documents_col,
+        chunks_col=chunks_col,
+        document_id=document_id,
+        text=text,
+        bot_id=bot_id,
+        embeddings=embeddings,
+    )
 
 
 def _now() -> datetime:

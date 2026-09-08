@@ -47,6 +47,44 @@ async def test_create_document_ingests_synchronously_and_becomes_ready():
         assert resp.json()["status"] == "ready"
 
 
+async def test_create_document_from_url_ingests_and_uses_page_title(monkeypatch):
+    async def fake_fetch(url):
+        return "Fig Care Guide", "water it weekly. " * 100
+
+    monkeypatch.setattr("app.routes.documents.fetch_url", fake_fetch)
+
+    async with _client_as(USER_A) as client:
+        resp = await client.post("/bots", json={"name": "URL Bot"})
+        bot_id = resp.json()["id"]
+
+        resp = await client.post(
+            f"/bots/{bot_id}/documents/url", json={"url": "https://plants.example/care"}
+        )
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["status"] == "ready"
+        assert body["url"] == "https://plants.example/care"
+        assert body["filename"] == "Fig Care Guide"
+
+
+async def test_create_document_from_url_marks_failed_on_fetch_error(monkeypatch):
+    async def bad_fetch(url):
+        raise Exception("host resolves to a non-public address")
+
+    monkeypatch.setattr("app.routes.documents.fetch_url", bad_fetch)
+
+    async with _client_as(USER_A) as client:
+        resp = await client.post("/bots", json={"name": "URL Bot"})
+        bot_id = resp.json()["id"]
+
+        resp = await client.post(
+            f"/bots/{bot_id}/documents/url", json={"url": "http://169.254.169.254/latest/meta-data"}
+        )
+        assert resp.status_code == 201
+        assert resp.json()["status"] == "failed"
+        assert resp.json()["error"]
+
+
 async def test_create_document_with_empty_text_marks_failed():
     async with _client_as(USER_A) as client:
         resp = await client.post("/bots", json={"name": "Doc Bot"})

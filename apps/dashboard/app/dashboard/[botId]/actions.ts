@@ -3,7 +3,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
 
-import { askBot, getBot, updateAllowedDomains, uploadDocument } from "@/lib/api";
+import { askBot, getBot, ingestUrl, updateAllowedDomains, uploadDocument } from "@/lib/api";
 
 export async function uploadDocumentAction(botId: string, formData: FormData) {
   await auth.protect();
@@ -15,6 +15,18 @@ export async function uploadDocumentAction(botId: string, formData: FormData) {
   }
 
   await uploadDocument(botId, filename, text);
+  revalidatePath(`/dashboard/${botId}`);
+}
+
+export async function ingestUrlAction(botId: string, formData: FormData) {
+  await auth.protect();
+
+  const url = String(formData.get("url") ?? "").trim();
+  if (!url) {
+    throw new Error("URL is required");
+  }
+
+  await ingestUrl(botId, url);
   revalidatePath(`/dashboard/${botId}`);
 }
 

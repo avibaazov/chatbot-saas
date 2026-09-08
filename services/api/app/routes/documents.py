@@ -2,6 +2,8 @@
 Clerk auth existed to enforce bot ownership — see app/services/ingestion.py.
 """
 
+from functools import partial
+
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -11,9 +13,10 @@ from app.core.config import get_settings
 from app.core.db import get_db
 from app.models.document import Document, DocumentStatus
 from app.services.embeddings import get_embeddings_provider
-from app.services.ingestion import ingest_document
+from app.services.ingestion import ingest_document, ingest_url
 from app.services.queue import get_queue
 from app.services.users import get_or_create_user
+from app.services.web_fetch import fetch_url
 
 router = APIRouter(prefix="/bots/{bot_id}/documents", tags=["documents"])
 
@@ -23,16 +26,25 @@ class CreateDocumentRequest(BaseModel):
     text: str  # raw text for now; file upload storage is a later decision
 
 
+class CreateUrlDocumentRequest(BaseModel):
+    url: str
+
+
 class DocumentResponse(BaseModel):
     id: str
     filename: str
+    url: str | None = None
     status: DocumentStatus
     error: str | None = None
 
 
 def _to_response(doc: dict) -> DocumentResponse:
     return DocumentResponse(
-        id=str(doc["_id"]), filename=doc["filename"], status=doc["status"], error=doc.get("error")
+        id=str(doc["_id"]),
+        filename=doc["filename"],
+        url=doc.get("url"),
+        status=doc["status"],
+        error=doc.get("error"),
     )
 
 
@@ -75,6 +87,45 @@ async def create_document(
             # before re-raising — that re-raise is for a real queue's retry/alerting
             # logic. InMemoryQueue runs inline in this request, so let the response
             # report the failed status instead of turning it into a 500.
+            pass
+
+    await queue.enqueue(job)
+
+    fresh = await db.documents.find_one({"_id": result.inserted_id})
+    return _to_response(fresh)
+
+
+@router.post("/url", response_model=DocumentResponse, status_code=201)
+async def create_document_from_url(
+    bot_id: str,
+    body: CreateUrlDocumentRequest,
+    clerk_user_id: str = Depends(get_current_clerk_user_id),
+):
+    settings = get_settings()
+    db = get_db()
+    await _verify_bot_ownership(db, bot_id, clerk_user_id)
+
+    url = body.url.strip()
+    doc = Document(bot_id=bot_id, filename=url, source_type="url", url=url)
+    result = await db.documents.insert_one(doc.model_dump(by_alias=True, exclude={"id"}))
+
+    embeddings = get_embeddings_provider(settings)
+    queue = get_queue(settings)
+
+    async def job():
+        try:
+            await ingest_url(
+                documents_col=db.documents,
+                chunks_col=db.chunks,
+                document_id=result.inserted_id,
+                url=url,
+                bot_id=bot_id,
+                embeddings=embeddings,
+                fetch=partial(fetch_url, allow_private=settings.ingest_allow_private_hosts),
+            )
+        except Exception:
+            # ingest_url / ingest_document already recorded status=failed + error;
+            # same rationale as create_document above.
             pass
 
     await queue.enqueue(job)

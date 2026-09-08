@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     # Embeddings (§5 step 4). Empty => FakeEmbeddingsProvider is used (dev/test only).
     voyage_api_key: str = Field(default="")
 
+    # DEV ONLY. When true, URL ingestion may fetch loopback/private/link-local hosts —
+    # needed to ingest a demo site served on 127.0.0.1. Never enable in a deployed
+    # environment: it re-opens the SSRF hole the guard in app/services/web_fetch.py closes.
+    ingest_allow_private_hosts: bool = Field(default=False)
+
     # Clerk (§5 step 7/8). JWKS URL for verifying session tokens the dashboard sends.
     # Derived from the Clerk publishable key's frontend-API domain — see
     # app/core/auth.py. Not a secret (JWKS is public by design), but still env-only

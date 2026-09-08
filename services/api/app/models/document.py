@@ -19,6 +19,7 @@ class Document(MongoBaseModel):
     bot_id: PyObjectId
     filename: str
     source_type: str  # "upload" | "url" | "text"
+    url: str | None = None  # set when source_type == "url"
     status: DocumentStatus = DocumentStatus.pending
     error: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

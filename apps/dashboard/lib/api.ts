@@ -94,6 +94,7 @@ export type DocumentStatus = "pending" | "processing" | "ready" | "failed";
 export type Document = {
   id: string;
   filename: string;
+  url: string | null;
   status: DocumentStatus;
   error: string | null;
 };
@@ -102,6 +103,13 @@ export function uploadDocument(botId: string, filename: string, text: string): P
   return apiFetch<Document>(`/bots/${botId}/documents`, {
     method: "POST",
     body: JSON.stringify({ filename, text }),
+  });
+}
+
+export function ingestUrl(botId: string, url: string): Promise<Document> {
+  return apiFetch<Document>(`/bots/${botId}/documents/url`, {
+    method: "POST",
+    body: JSON.stringify({ url }),
   });
 }
 

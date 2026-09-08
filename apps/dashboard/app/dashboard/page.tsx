@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
+import Link from "next/link";
 
 import { listBots } from "@/lib/api";
 import { createBotAction, deleteBotAction } from "./actions";
@@ -39,7 +40,9 @@ export default async function DashboardPage() {
               className="rounded border border-black/10 p-4 dark:border-white/20"
             >
               <div className="flex items-center justify-between">
-                <span className="font-medium">{bot.name}</span>
+                <Link href={`/dashboard/${bot.id}`} className="font-medium hover:underline">
+                  {bot.name}
+                </Link>
                 <form action={deleteBotAction.bind(null, bot.id)}>
                   <button type="submit" className="text-sm text-red-600">
                     Delete

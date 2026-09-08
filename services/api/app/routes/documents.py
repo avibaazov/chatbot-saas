@@ -83,6 +83,14 @@ async def create_document(
     return _to_response(fresh)
 
 
+@router.get("", response_model=list[DocumentResponse])
+async def list_documents(bot_id: str, clerk_user_id: str = Depends(get_current_clerk_user_id)):
+    db = get_db()
+    await _verify_bot_ownership(db, bot_id, clerk_user_id)
+    docs = await db.documents.find({"bot_id": bot_id}).to_list(length=100)
+    return [_to_response(d) for d in docs]
+
+
 @router.get("/{document_id}", response_model=DocumentResponse)
 async def get_document(
     bot_id: str, document_id: str, clerk_user_id: str = Depends(get_current_clerk_user_id)

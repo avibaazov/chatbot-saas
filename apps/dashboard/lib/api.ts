@@ -77,3 +77,34 @@ export function createBot(name: string): Promise<Bot> {
 export function deleteBot(botId: string): Promise<void> {
   return apiFetch<void>(`/bots/${botId}`, { method: "DELETE" });
 }
+
+export function getBot(botId: string): Promise<Bot> {
+  return apiFetch<Bot>(`/bots/${botId}`);
+}
+
+export type DocumentStatus = "pending" | "processing" | "ready" | "failed";
+
+export type Document = {
+  id: string;
+  filename: string;
+  status: DocumentStatus;
+  error: string | null;
+};
+
+export function uploadDocument(botId: string, filename: string, text: string): Promise<Document> {
+  return apiFetch<Document>(`/bots/${botId}/documents`, {
+    method: "POST",
+    body: JSON.stringify({ filename, text }),
+  });
+}
+
+export function listDocuments(botId: string): Promise<Document[]> {
+  return apiFetch<Document[]>(`/bots/${botId}/documents`);
+}
+
+export function askBot(botId: string, question: string): Promise<{ answer: string }> {
+  return apiFetch<{ answer: string }>(`/bots/${botId}/ask`, {
+    method: "POST",
+    body: JSON.stringify({ question }),
+  });
+}

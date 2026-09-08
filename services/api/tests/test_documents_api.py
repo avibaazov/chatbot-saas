@@ -60,6 +60,24 @@ async def test_create_document_with_empty_text_marks_failed():
         assert resp.json()["error"]
 
 
+async def test_list_documents_returns_uploaded_docs():
+    async with _client_as(USER_A) as client:
+        resp = await client.post("/bots", json={"name": "Doc Bot"})
+        bot_id = resp.json()["id"]
+
+        await client.post(
+            f"/bots/{bot_id}/documents", json={"filename": "a.txt", "text": "some content here"}
+        )
+        await client.post(
+            f"/bots/{bot_id}/documents", json={"filename": "b.txt", "text": "more content here"}
+        )
+
+        resp = await client.get(f"/bots/{bot_id}/documents")
+        assert resp.status_code == 200
+        filenames = {d["filename"] for d in resp.json()}
+        assert filenames == {"a.txt", "b.txt"}
+
+
 async def test_documents_route_respects_bot_ownership():
     async with _client_as(USER_A) as client:
         resp = await client.post("/bots", json={"name": "Not yours"})

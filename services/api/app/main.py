@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
-from app.routes import bots, documents, health
+from app.routes import bots, chat, documents, health
 
 settings = get_settings()
 
@@ -34,3 +34,4 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(bots.router)
 app.include_router(documents.router)
+app.include_router(chat.router)

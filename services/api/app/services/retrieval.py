@@ -1,8 +1,13 @@
-"""Vector retrieval abstraction. AtlasVectorStore (real) queries Mongo Atlas Vector Search
-via a $vectorSearch aggregation stage — but that needs a Vector Search index that doesn't
-exist yet (it requires real, semantically meaningful embeddings first; see
-app/services/embeddings.py). InMemoryVectorStore stands in for tests/dev: brute-force
-cosine similarity over whatever chunks it's given.
+"""Vector retrieval abstraction.
+
+MongoBruteForceVectorStore is the real implementation in use right now: it loads a bot's
+chunks from Mongo and ranks them by cosine similarity in Python. O(n) per query — perfectly
+fine at today's per-bot chunk counts, and it works without an Atlas Search index, which a
+meaningful $vectorSearch needs real (non-fake) embeddings to justify setting up. Swap for
+AtlasVectorStore once VoyageEmbeddingsProvider exists and chunk volume actually warrants it.
+
+InMemoryVectorStore is the same ranking logic over a plain list, kept separate for fast,
+network-free unit tests (see tests/test_rag.py).
 """
 
 from __future__ import annotations
@@ -17,9 +22,15 @@ class VectorStore(Protocol):
     async def search(self, *, bot_id: str, query_embedding: list[float], top_k: int) -> list[Chunk]: ...
 
 
+def _rank(chunks: list[Chunk], query_embedding: list[float], top_k: int) -> list[Chunk]:
+    scored = [(c, _cosine_similarity(c.embedding, query_embedding)) for c in chunks]
+    scored.sort(key=lambda pair: pair[1], reverse=True)
+    return [c for c, _ in scored[:top_k]]
+
+
 class InMemoryVectorStore:
-    """Brute-force cosine similarity over an in-memory list of chunks. O(n), fine for
-    tests and tiny dev datasets — not how retrieval works once Atlas Vector Search is wired.
+    """Brute-force cosine similarity over an in-memory list of chunks — test-only stand-in
+    for MongoBruteForceVectorStore, so tests don't need a live Mongo connection.
     """
 
     def __init__(self, chunks: list[Chunk] | None = None):
@@ -27,15 +38,27 @@ class InMemoryVectorStore:
 
     async def search(self, *, bot_id: str, query_embedding: list[float], top_k: int) -> list[Chunk]:
         candidates = [c for c in self.chunks if c.bot_id == bot_id]
-        scored = [(c, _cosine_similarity(c.embedding, query_embedding)) for c in candidates]
-        scored.sort(key=lambda pair: pair[1], reverse=True)
-        return [c for c, _ in scored[:top_k]]
+        return _rank(candidates, query_embedding, top_k)
+
+
+class MongoBruteForceVectorStore:
+    """Real implementation: fetches every chunk for a bot from Mongo, ranks in Python. See
+    module docstring for why this is the right tradeoff today instead of Atlas Vector Search.
+    """
+
+    def __init__(self, chunks_col):
+        self.chunks_col = chunks_col
+
+    async def search(self, *, bot_id: str, query_embedding: list[float], top_k: int) -> list[Chunk]:
+        docs = await self.chunks_col.find({"bot_id": bot_id}).to_list(length=None)
+        chunks = [Chunk(**doc) for doc in docs]
+        return _rank(chunks, query_embedding, top_k)
 
 
 class AtlasVectorStore:
-    """Real implementation. Not implemented yet — needs a $vectorSearch aggregation
-    against a Vector Search index on chunks.embedding, which itself needs real (non-fake)
-    embeddings to be meaningful. Wire up once VoyageEmbeddingsProvider exists.
+    """Future implementation: a $vectorSearch aggregation against a Vector Search index on
+    chunks.embedding. Worth building once per-bot chunk counts make MongoBruteForceVectorStore's
+    O(n) scan too slow, and once embeddings are real enough for an index to be meaningful.
     """
 
     def __init__(self, chunks_col):
@@ -44,7 +67,8 @@ class AtlasVectorStore:
     async def search(self, *, bot_id: str, query_embedding: list[float], top_k: int) -> list[Chunk]:
         raise NotImplementedError(
             "Atlas Vector Search isn't wired up yet — create the index once real "
-            "embeddings exist, then implement the $vectorSearch aggregation here."
+            "embeddings exist and MongoBruteForceVectorStore's O(n) scan becomes the "
+            "bottleneck, then implement the $vectorSearch aggregation here."
         )
 
 

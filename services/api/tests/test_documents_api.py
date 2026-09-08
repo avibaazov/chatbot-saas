@@ -7,7 +7,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.core.auth import get_current_clerk_user_id
-from app.main import app
+from app.main import dashboard_app
 from tests.integration_helpers import purge_test_data, reset_db_client
 
 USER_A = "pytest_docs_user_a"
@@ -20,12 +20,12 @@ async def _clean():
     await purge_test_data()
     yield
     await purge_test_data()
-    app.dependency_overrides.pop(get_current_clerk_user_id, None)
+    dashboard_app.dependency_overrides.pop(get_current_clerk_user_id, None)
 
 
 def _client_as(clerk_user_id: str) -> AsyncClient:
-    app.dependency_overrides[get_current_clerk_user_id] = lambda: clerk_user_id
-    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    dashboard_app.dependency_overrides[get_current_clerk_user_id] = lambda: clerk_user_id
+    return AsyncClient(transport=ASGITransport(app=dashboard_app), base_url="http://test")
 
 
 async def test_create_document_ingests_synchronously_and_becomes_ready():

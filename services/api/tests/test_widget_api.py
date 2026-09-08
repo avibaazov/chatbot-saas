@@ -3,13 +3,22 @@ thing under test (origin vs. allowed_domains matching, CORS header correctness) 
 run against the real bot document. Dashboard-side calls (create bot, set allowed domains)
 still go through the regular app with auth overridden; widget calls go through widget_app
 directly via its own ASGI transport, with NO auth override — that's the point, it's public.
+
+Most tests below hit widget_app directly (isolated), which is deliberate for speed and
+focus — but that isolation is exactly what let a real bug slip past this suite once
+already: widget_app worked fine alone, yet real browser requests through the fully
+mounted `app` got rejected, because Starlette middleware on a parent app wraps mounted
+sub-apps too (add_middleware() isn't escaped by mount()) — the dashboard's CORSMiddleware
+was intercepting /widget/* before this router ever ran. test_widget_ask_works_through_the_
+actual_mounted_app below hits `app` itself for that reason: it's the one test that would
+have caught it.
 """
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.core.auth import get_current_clerk_user_id
-from app.main import app
+from app.main import app, dashboard_app
 from app.routes.widget import widget_app
 from app.services.rate_limit import _buckets
 from tests.integration_helpers import purge_test_data, reset_db_client
@@ -24,12 +33,12 @@ async def _clean():
     _buckets.clear()
     yield
     await purge_test_data()
-    app.dependency_overrides.pop(get_current_clerk_user_id, None)
+    dashboard_app.dependency_overrides.pop(get_current_clerk_user_id, None)
 
 
 def _dashboard_client_as(clerk_user_id: str) -> AsyncClient:
-    app.dependency_overrides[get_current_clerk_user_id] = lambda: clerk_user_id
-    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    dashboard_app.dependency_overrides[get_current_clerk_user_id] = lambda: clerk_user_id
+    return AsyncClient(transport=ASGITransport(app=dashboard_app), base_url="http://test")
 
 
 def _widget_client() -> AsyncClient:
@@ -96,6 +105,30 @@ async def test_wildcard_allowed_domain_permits_any_origin():
             headers={"Origin": "https://anything-at-all.example"},
         )
     assert resp.status_code == 200
+
+
+async def test_widget_preflight_and_ask_work_through_the_actual_mounted_app():
+    """Regression test for the mount/middleware bug: goes through `app` itself (the real
+    ASGI entrypoint uvicorn serves), not the isolated widget_app the other tests use.
+    A third-party origin, not in the dashboard's allowed CORS_ORIGINS, must still work here.
+    """
+    bot = await _create_bot_with_allowed_domain("example.com")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        preflight = await client.options(
+            f"/widget/{bot['site_key']}/ask",
+            headers={"Origin": "https://example.com", "Access-Control-Request-Method": "POST"},
+        )
+        assert preflight.status_code == 204
+        assert preflight.headers["access-control-allow-origin"] == "https://example.com"
+
+        resp = await client.post(
+            f"/widget/{bot['site_key']}/ask",
+            json={"question": "hi"},
+            headers={"Origin": "https://example.com"},
+        )
+    assert resp.status_code == 200
+    assert resp.headers["access-control-allow-origin"] == "https://example.com"
 
 
 async def test_unknown_site_key_returns_404():

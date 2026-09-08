@@ -21,18 +21,38 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Chatbot API", version="0.1.0", lifespan=lifespan)
+# `app` itself carries NO middleware. Starlette middleware added via add_middleware()
+# wraps the entire ASGI call chain, including mounted sub-apps — app.mount() does not
+# escape it. So the dashboard-only CORSMiddleware lives on `dashboard_app` instead, and
+# `widget_app` (mounted below, handling its own per-bot CORS from allowed_domains) never
+# passes through it. Mount order matters: /widget must be registered before "/", or the
+# root mount (which prefix-matches everything) would swallow it first.
+# docs/openapi/redoc disabled here on purpose: FastAPI auto-registers those as routes at
+# construction time, and since they'd be registered before the mounts below, they'd win
+# path-matching over dashboard_app's own /docs and /openapi.json (Starlette matches routes
+# in registration order) — silently shadowing them instead of erroring, so it's easy to
+# miss. dashboard_app's copies are what's actually reachable through the "/" mount.
+app = FastAPI(
+    title="Chatbot API",
+    version="0.1.0",
+    lifespan=lifespan,
+    openapi_url=None,
+    docs_url=None,
+    redoc_url=None,
+)
 
-app.add_middleware(
+dashboard_app = FastAPI(title="Chatbot API — dashboard-facing")
+dashboard_app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=False,  # widget auth is a site key, not cookies — see AGENTS.md §3
     allow_methods=["*"],
     allow_headers=["*"],
 )
+dashboard_app.include_router(health.router)
+dashboard_app.include_router(bots.router)
+dashboard_app.include_router(documents.router)
+dashboard_app.include_router(chat.router)
 
-app.include_router(health.router)
-app.include_router(bots.router)
-app.include_router(documents.router)
-app.include_router(chat.router)
 app.mount("/widget", widget.widget_app)
+app.mount("/", dashboard_app)

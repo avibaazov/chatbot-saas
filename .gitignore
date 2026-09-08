@@ -1,8 +1,9 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# Monorepo: patterns are unrooted on purpose so they match inside apps/*, services/*, packages/*.
 
-# dependencies
-/node_modules
-/.pnp
+# dependencies (node)
+node_modules/
+.pnp
 .pnp.*
 .yarn/*
 !.yarn/patches
@@ -10,15 +11,23 @@
 !.yarn/releases
 !.yarn/versions
 
+# dependencies (python)
+venv/
+.venv/
+__pycache__/
+*.pyc
+
 # testing
-/coverage
+coverage/
+.pytest_cache/
 
 # next.js
-/.next/
-/out/
+.next/
+out/
 
 # production
-/build
+build/
+dist/
 
 # misc
 .DS_Store
@@ -39,3 +48,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# legacy model artifacts (in case any prototype code is ever copied in)
+*.pth
+flask_session/

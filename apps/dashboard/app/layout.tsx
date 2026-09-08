@@ -1,4 +1,5 @@
-import { ClerkProvider } from "@clerk/nextjs";
+import { ClerkProvider, Show, SignInButton, UserButton } from "@clerk/nextjs";
+import Link from "next/link";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
@@ -26,6 +27,22 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col">
         <ClerkProvider>
+          <header className="flex items-center justify-between border-b border-black/10 px-6 py-3 dark:border-white/20">
+            <Link href="/" className="font-semibold">
+              chatbot
+            </Link>
+            <div className="flex items-center gap-4">
+              <Show when="signed-in">
+                <Link href="/dashboard" className="text-sm">
+                  Dashboard
+                </Link>
+                <UserButton />
+              </Show>
+              <Show when="signed-out">
+                <SignInButton />
+              </Show>
+            </div>
+          </header>
           {children}
         </ClerkProvider>
       </body>

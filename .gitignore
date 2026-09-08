@@ -58,3 +58,7 @@ next-env.d.ts
 # legacy model artifacts (in case any prototype code is ever copied in)
 *.pth
 flask_session/
+
+# IDE-saved pasted screenshots (may contain credentials shown on-screen)
+/Screenshot/
+

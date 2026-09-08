@@ -8,6 +8,7 @@ import secrets
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from pymongo import ReturnDocument
 
 from app.core.auth import get_current_clerk_user_id
 from app.core.db import get_db
@@ -19,6 +20,10 @@ router = APIRouter(prefix="/bots", tags=["bots"])
 
 class CreateBotRequest(BaseModel):
     name: str
+
+
+class UpdateAllowedDomainsRequest(BaseModel):
+    allowed_domains: list[str]
 
 
 class BotResponse(BaseModel):
@@ -70,6 +75,24 @@ async def get_bot(bot_id: str, clerk_user_id: str = Depends(get_current_clerk_us
     if not doc:
         raise HTTPException(status_code=404, detail="bot not found")
     return _to_response(doc)
+
+
+@router.put("/{bot_id}/allowed-domains", response_model=BotResponse)
+async def update_allowed_domains(
+    bot_id: str,
+    body: UpdateAllowedDomainsRequest,
+    clerk_user_id: str = Depends(get_current_clerk_user_id),
+):
+    db = get_db()
+    user = await get_or_create_user(db.users, clerk_user_id)
+    result = await db.bots.find_one_and_update(
+        {"_id": ObjectId(bot_id), "owner_user_id": str(user["_id"])},
+        {"$set": {"allowed_domains": body.allowed_domains}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="bot not found")
+    return _to_response(result)
 
 
 @router.delete("/{bot_id}", status_code=204)

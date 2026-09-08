@@ -8,7 +8,14 @@
 
 import { auth } from "@clerk/nextjs/server";
 
-const API_BASE_URL = process.env.API_BASE_URL ?? "http://127.0.0.1:8001";
+export const API_BASE_URL = process.env.API_BASE_URL ?? "http://127.0.0.1:8002";
+
+// Where the built widget bundle (packages/widget/dist/widget.js) is actually served from.
+// Not deployed to a real CDN yet (AGENTS.md §4) — defaults to the local demo server
+// (packages/widget/demo/, served via `python -m http.server 5500`) so the embed snippet
+// shown in the dashboard is something that genuinely works today, not a placeholder URL.
+export const WIDGET_SCRIPT_URL =
+  process.env.WIDGET_SCRIPT_URL ?? "http://127.0.0.1:5500/dist/widget.js";
 
 export class ApiError extends Error {
   constructor(
@@ -106,5 +113,12 @@ export function askBot(botId: string, question: string): Promise<{ answer: strin
   return apiFetch<{ answer: string }>(`/bots/${botId}/ask`, {
     method: "POST",
     body: JSON.stringify({ question }),
+  });
+}
+
+export function updateAllowedDomains(botId: string, allowedDomains: string[]): Promise<Bot> {
+  return apiFetch<Bot>(`/bots/${botId}/allowed-domains`, {
+    method: "PUT",
+    body: JSON.stringify({ allowed_domains: allowedDomains }),
   });
 }

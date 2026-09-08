@@ -3,7 +3,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
 
-import { askBot, uploadDocument } from "@/lib/api";
+import { askBot, getBot, updateAllowedDomains, uploadDocument } from "@/lib/api";
 
 export async function uploadDocumentAction(botId: string, formData: FormData) {
   await auth.protect();
@@ -32,4 +32,30 @@ export async function askBotAction(
 
   const { answer } = await askBot(botId, question);
   return { question, answer };
+}
+
+export async function addAllowedDomainAction(botId: string, formData: FormData) {
+  await auth.protect();
+
+  const domain = String(formData.get("domain") ?? "").trim();
+  if (!domain) {
+    throw new Error("Domain is required");
+  }
+
+  const bot = await getBot(botId);
+  if (!bot.allowed_domains.includes(domain)) {
+    await updateAllowedDomains(botId, [...bot.allowed_domains, domain]);
+  }
+  revalidatePath(`/dashboard/${botId}`);
+}
+
+export async function removeAllowedDomainAction(botId: string, domain: string) {
+  await auth.protect();
+
+  const bot = await getBot(botId);
+  await updateAllowedDomains(
+    botId,
+    bot.allowed_domains.filter((d) => d !== domain),
+  );
+  revalidatePath(`/dashboard/${botId}`);
 }

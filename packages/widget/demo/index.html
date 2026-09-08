@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Widget demo — this is a fake customer website</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 60px auto; line-height: 1.6; color: #222; }
+    h1 { font-size: 1.4rem; }
+    code { background: #f1f1f1; padding: 2px 6px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Acme Corp — totally real website</h1>
+  <p>
+    This page stands in for a customer's own website. The chat bubble in the
+    bottom-right corner is the embeddable widget, loaded via one
+    <code>&lt;script&gt;</code> tag, exactly like a real customer would embed it.
+  </p>
+  <p>
+    Click it and ask something like <em>"what are your hours?"</em> — it's backed by a
+    real bot with real (if minimal) training content in Atlas, going through the actual
+    public <code>/widget/{site_key}</code> API with origin-based auth, not a mock.
+  </p>
+
+  <script
+    src="../dist/widget.js"
+    data-bot-key="sk_pub_demo_widget_test"
+    data-api-base="http://127.0.0.1:8002"
+    async
+  ></script>
+</body>
+</html>

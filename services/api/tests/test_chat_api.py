@@ -30,7 +30,9 @@ def _client_as(clerk_user_id: str) -> AsyncClient:
 
 async def test_ask_retrieves_ingested_content():
     async with _client_as(USER_A) as client:
-        resp = await client.post("/bots", json={"name": "Ask Bot"})
+        resp = await client.post(
+            "/bots", json={"name": "Ask Bot", "website_url": "http://127.0.0.1:9/"}
+        )
         bot_id = resp.json()["id"]
 
         resp = await client.post(
@@ -49,7 +51,9 @@ async def test_ask_retrieves_ingested_content():
 
 async def test_ask_respects_bot_ownership():
     async with _client_as(USER_A) as client:
-        resp = await client.post("/bots", json={"name": "Not yours"})
+        resp = await client.post(
+            "/bots", json={"name": "Not yours", "website_url": "http://127.0.0.1:9/"}
+        )
         bot_id = resp.json()["id"]
 
     async with _client_as(USER_B) as client:

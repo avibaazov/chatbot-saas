@@ -2,32 +2,32 @@
 Clerk auth existed to enforce bot ownership — see app/services/ingestion.py.
 """
 
-from functools import partial
-
 from bson import ObjectId
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from app.core.auth import get_current_clerk_user_id
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.models.document import Document, DocumentStatus
-from app.services.embeddings import get_embeddings_provider
-from app.services.ingestion import ingest_document, ingest_url
-from app.services.queue import get_queue
+from app.services.ingestion_jobs import enqueue_text_ingestion, enqueue_url_ingestion
 from app.services.users import get_or_create_user
-from app.services.web_fetch import fetch_url
 
 router = APIRouter(prefix="/bots/{bot_id}/documents", tags=["documents"])
 
+# Cap on a single pasted document. ~100k chars is roughly 25k tokens — enough for a big
+# FAQ or policy page, small enough that one request can't run up an unbounded embedding
+# bill or spike memory. Larger sources belong in file upload (a later decision).
+MAX_DOCUMENT_CHARS = 100_000
+
 
 class CreateDocumentRequest(BaseModel):
-    filename: str
-    text: str  # raw text for now; file upload storage is a later decision
+    filename: str = Field(min_length=1, max_length=200)
+    text: str = Field(min_length=1, max_length=MAX_DOCUMENT_CHARS)  # raw text for now
 
 
 class CreateUrlDocumentRequest(BaseModel):
-    url: str
+    url: str = Field(min_length=1, max_length=2048)
 
 
 class DocumentResponse(BaseModel):
@@ -60,6 +60,7 @@ async def _verify_bot_ownership(db, bot_id: str, clerk_user_id: str) -> dict:
 async def create_document(
     bot_id: str,
     body: CreateDocumentRequest,
+    background_tasks: BackgroundTasks,
     clerk_user_id: str = Depends(get_current_clerk_user_id),
 ):
     settings = get_settings()
@@ -69,27 +70,14 @@ async def create_document(
     doc = Document(bot_id=bot_id, filename=body.filename, source_type="text")
     result = await db.documents.insert_one(doc.model_dump(by_alias=True, exclude={"id"}))
 
-    embeddings = get_embeddings_provider(settings)
-    queue = get_queue(settings)
-
-    async def job():
-        try:
-            await ingest_document(
-                documents_col=db.documents,
-                chunks_col=db.chunks,
-                document_id=result.inserted_id,
-                text=body.text,
-                bot_id=bot_id,
-                embeddings=embeddings,
-            )
-        except Exception:
-            # ingest_document already recorded status=failed + error on the document
-            # before re-raising — that re-raise is for a real queue's retry/alerting
-            # logic. InMemoryQueue runs inline in this request, so let the response
-            # report the failed status instead of turning it into a 500.
-            pass
-
-    await queue.enqueue(job)
+    await enqueue_text_ingestion(
+        db,
+        settings,
+        document_id=result.inserted_id,
+        text=body.text,
+        bot_id=bot_id,
+        background_tasks=background_tasks,
+    )
 
     fresh = await db.documents.find_one({"_id": result.inserted_id})
     return _to_response(fresh)
@@ -99,6 +87,7 @@ async def create_document(
 async def create_document_from_url(
     bot_id: str,
     body: CreateUrlDocumentRequest,
+    background_tasks: BackgroundTasks,
     clerk_user_id: str = Depends(get_current_clerk_user_id),
 ):
     settings = get_settings()
@@ -109,28 +98,54 @@ async def create_document_from_url(
     doc = Document(bot_id=bot_id, filename=url, source_type="url", url=url)
     result = await db.documents.insert_one(doc.model_dump(by_alias=True, exclude={"id"}))
 
-    embeddings = get_embeddings_provider(settings)
-    queue = get_queue(settings)
-
-    async def job():
-        try:
-            await ingest_url(
-                documents_col=db.documents,
-                chunks_col=db.chunks,
-                document_id=result.inserted_id,
-                url=url,
-                bot_id=bot_id,
-                embeddings=embeddings,
-                fetch=partial(fetch_url, allow_private=settings.ingest_allow_private_hosts),
-            )
-        except Exception:
-            # ingest_url / ingest_document already recorded status=failed + error;
-            # same rationale as create_document above.
-            pass
-
-    await queue.enqueue(job)
+    await enqueue_url_ingestion(
+        db,
+        settings,
+        document_id=result.inserted_id,
+        url=url,
+        bot_id=bot_id,
+        background_tasks=background_tasks,
+    )
 
     fresh = await db.documents.find_one({"_id": result.inserted_id})
+    return _to_response(fresh)
+
+
+@router.post("/{document_id}/reload", response_model=DocumentResponse)
+async def reload_document(
+    bot_id: str,
+    document_id: str,
+    background_tasks: BackgroundTasks,
+    clerk_user_id: str = Depends(get_current_clerk_user_id),
+):
+    """Re-crawl a URL document: drop its old chunks, reset status, re-run ingestion. Used
+    by the dashboard's "Reload" button to pick up changes to the trained site.
+    """
+    settings = get_settings()
+    db = get_db()
+    await _verify_bot_ownership(db, bot_id, clerk_user_id)
+
+    doc = await db.documents.find_one({"_id": ObjectId(document_id), "bot_id": bot_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="document not found")
+    if doc.get("source_type") != "url" or not doc.get("url"):
+        raise HTTPException(status_code=400, detail="only URL documents can be reloaded")
+
+    await db.chunks.delete_many({"document_id": document_id})
+    await db.documents.update_one(
+        {"_id": doc["_id"]},
+        {"$set": {"status": DocumentStatus.pending, "error": None}},
+    )
+    await enqueue_url_ingestion(
+        db,
+        settings,
+        document_id=doc["_id"],
+        url=doc["url"],
+        bot_id=bot_id,
+        background_tasks=background_tasks,
+    )
+
+    fresh = await db.documents.find_one({"_id": doc["_id"]})
     return _to_response(fresh)
 
 

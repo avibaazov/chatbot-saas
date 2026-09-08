@@ -12,21 +12,35 @@
 interface WidgetConfig {
   display_name: string;
   primary_color: string;
+  font_size: string; // "small" | "medium" | "large"
 }
 
 type Message = { role: "user" | "assistant"; content: string };
 
-function getScriptConfig(): { siteKey: string; apiBase: string } {
+const FONT_SIZE_PX: Record<string, string> = { small: "13px", medium: "14px", large: "16px" };
+
+function getScriptConfig(): {
+  siteKey: string;
+  apiBase: string;
+  startOpen: boolean;
+  offsetBottom: number;
+} {
   const script = document.currentScript as HTMLScriptElement | null;
   const siteKey = script?.dataset.botKey;
   const apiBase = script?.dataset.apiBase;
+  // data-open (any value, or bare attribute) renders with the panel already open. Used by
+  // the dashboard's live preview so it shows the chat interface, not just the bubble.
+  const startOpen = script?.dataset.open != null;
+  // data-offset-bottom nudges the bubble + panel up by N extra pixels, so an embedder can
+  // keep it clear of their own fixed footer / cookie bar.
+  const offsetBottom = Math.max(0, Number(script?.dataset.offsetBottom) || 0);
 
   if (!siteKey || !apiBase) {
     throw new Error(
       "[chatbot-widget] Missing data-bot-key or data-api-base on the <script> tag.",
     );
   }
-  return { siteKey, apiBase: apiBase.replace(/\/$/, "") };
+  return { siteKey, apiBase: apiBase.replace(/\/$/, ""), startOpen, offsetBottom };
 }
 
 async function fetchConfig(apiBase: string, siteKey: string): Promise<WidgetConfig> {
@@ -51,37 +65,40 @@ async function askBot(apiBase: string, siteKey: string, question: string): Promi
   return body.answer;
 }
 
-function buildStyles(primaryColor: string): string {
+function buildStyles(primaryColor: string, fontSize: string, offsetBottom: number): string {
+  const fontPx = FONT_SIZE_PX[fontSize] ?? FONT_SIZE_PX.medium;
+  const bubbleBottom = 20 + offsetBottom;
+  const panelBottom = 88 + offsetBottom;
   return `
     :host { all: initial; }
     * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
     .bubble {
-      position: fixed; bottom: 20px; right: 20px; width: 56px; height: 56px;
+      position: fixed; bottom: ${bubbleBottom}px; right: 20px; width: 56px; height: 56px;
       border-radius: 999px; background: ${primaryColor}; color: white; border: none;
       cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.2); font-size: 24px;
       display: flex; align-items: center; justify-content: center; z-index: 2147483000;
     }
     .panel {
-      position: fixed; bottom: 88px; right: 20px; width: 320px; height: 440px;
+      position: fixed; bottom: ${panelBottom}px; right: 20px; width: 320px; height: 440px;
       background: white; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.25);
       display: flex; flex-direction: column; overflow: hidden; z-index: 2147483000;
     }
     .panel[hidden] { display: none; }
     .header { background: ${primaryColor}; color: white; padding: 12px 16px; font-weight: 600; }
     .messages { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
-    .msg { max-width: 85%; padding: 8px 12px; border-radius: 10px; font-size: 14px; line-height: 1.4; }
+    .msg { max-width: 85%; padding: 8px 12px; border-radius: 10px; font-size: ${fontPx}; line-height: 1.4; }
     .msg.user { align-self: flex-end; background: ${primaryColor}; color: white; }
     .msg.assistant { align-self: flex-start; background: #f1f1f1; color: #111; }
     .msg.error { align-self: center; color: #b00020; font-size: 12px; }
     form { display: flex; border-top: 1px solid #eee; }
-    input { flex: 1; border: none; padding: 10px 12px; font-size: 14px; outline: none; }
+    input { flex: 1; border: none; padding: 10px 12px; font-size: ${fontPx}; outline: none; }
     button.send { border: none; background: none; color: ${primaryColor}; font-weight: 600; padding: 0 14px; cursor: pointer; }
     button.send:disabled { opacity: 0.5; cursor: default; }
   `;
 }
 
 async function mount() {
-  const { siteKey, apiBase } = getScriptConfig();
+  const { siteKey, apiBase, startOpen, offsetBottom } = getScriptConfig();
 
   let config: WidgetConfig;
   try {
@@ -92,11 +109,12 @@ async function mount() {
   }
 
   const host = document.createElement("div");
+  host.dataset.chatbotWidget = "";  // marks the mount point so an embedder can find/remove it
   document.body.appendChild(host);
   const shadow = host.attachShadow({ mode: "open" });
 
   const style = document.createElement("style");
-  style.textContent = buildStyles(config.primary_color);
+  style.textContent = buildStyles(config.primary_color, config.font_size, offsetBottom);
   shadow.appendChild(style);
 
   const bubble = document.createElement("button");
@@ -107,7 +125,7 @@ async function mount() {
 
   const panel = document.createElement("div");
   panel.className = "panel";
-  panel.hidden = true;
+  panel.hidden = !startOpen;
   panel.innerHTML = `
     <div class="header">${escapeHtml(config.display_name)}</div>
     <div class="messages"></div>

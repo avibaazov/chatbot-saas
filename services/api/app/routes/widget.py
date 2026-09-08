@@ -34,8 +34,20 @@ RATE_LIMIT_PER_MINUTE = 20
 def _is_origin_allowed(origin: str | None, allowed_domains: list[str]) -> bool:
     if "*" in allowed_domains:
         return True
+    # The dashboard is first-party: it embeds the real widget as a live preview on the bot
+    # detail page. Its own origin is always allowed, regardless of the bot's allow-list, so
+    # the preview works without the user adding their dashboard domain by hand.
+    if origin and origin in get_settings().cors_origins:
+        return True
     hostname = extract_hostname(origin) if origin else None
-    return hostname is not None and hostname in allowed_domains
+    if hostname is None:
+        return False
+    # A bot is tied to one website (its training URL's host). Match that host exactly, or
+    # any subdomain of it — so a bot for "acme.com" also works when embedded on
+    # "www.acme.com" or "help.acme.com" without the user maintaining a domain list.
+    return any(
+        hostname == allowed or hostname.endswith(f".{allowed}") for allowed in allowed_domains
+    )
 
 
 async def _get_bot_by_site_key(site_key: str) -> dict:
@@ -57,6 +69,7 @@ def _apply_cors(response: Response, origin: str | None) -> None:
 class WidgetConfigResponse(BaseModel):
     display_name: str
     primary_color: str
+    font_size: str
 
 
 @router.get("/config", response_model=WidgetConfigResponse)
@@ -68,7 +81,11 @@ async def widget_config(site_key: str, request: Request, response: Response):
     _apply_cors(response, origin)
 
     config = BotConfig(**bot["config"])
-    return WidgetConfigResponse(display_name=config.display_name, primary_color=config.primary_color)
+    return WidgetConfigResponse(
+        display_name=config.display_name,
+        primary_color=config.primary_color,
+        font_size=config.font_size,
+    )
 
 
 class WidgetAskRequest(BaseModel):

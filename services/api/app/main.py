@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from app.core.config import get_settings
 from app.routes import bots, chat, documents, health, widget
@@ -53,6 +55,29 @@ dashboard_app.include_router(health.router)
 dashboard_app.include_router(bots.router)
 dashboard_app.include_router(documents.router)
 dashboard_app.include_router(chat.router)
+
+@app.get("/widget.js", include_in_schema=False)
+async def widget_bundle():
+    """Serve the built embeddable widget bundle. The embed snippet the dashboard generates
+    points a third-party <script src> here, so it's sent with permissive caching and an
+    open CORS header (it's public static JS, no per-bot auth — that happens on /widget/*).
+    Registered before the "/" mount below, which would otherwise swallow the path.
+    """
+    path = Path(settings.widget_bundle_path)
+    if not path.is_file():
+        raise HTTPException(
+            status_code=503,
+            detail="widget bundle not found — build packages/widget or set WIDGET_BUNDLE_PATH",
+        )
+    return FileResponse(
+        path,
+        media_type="application/javascript",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "public, max-age=300",
+        },
+    )
+
 
 app.mount("/widget", widget.widget_app)
 app.mount("/", dashboard_app)

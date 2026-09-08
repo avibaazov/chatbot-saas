@@ -10,12 +10,11 @@ import { auth } from "@clerk/nextjs/server";
 
 export const API_BASE_URL = process.env.API_BASE_URL ?? "http://127.0.0.1:8002";
 
-// Where the built widget bundle (packages/widget/dist/widget.js) is actually served from.
-// Not deployed to a real CDN yet (AGENTS.md §4) — defaults to the local demo server
-// (packages/widget/demo/, served via `python -m http.server 5500`) so the embed snippet
-// shown in the dashboard is something that genuinely works today, not a placeholder URL.
+// Where the built widget bundle is served from. The API serves it at GET /widget.js
+// (see services/api/app/main.py), so by default the embed snippet points there. Override
+// with WIDGET_SCRIPT_URL once the bundle is published to a real CDN (AGENTS.md §4).
 export const WIDGET_SCRIPT_URL =
-  process.env.WIDGET_SCRIPT_URL ?? "http://127.0.0.1:5500/dist/widget.js";
+  process.env.WIDGET_SCRIPT_URL ?? `${API_BASE_URL}/widget.js`;
 
 export class ApiError extends Error {
   constructor(
@@ -60,11 +59,19 @@ export type BotConfig = {
   model_tier: string;
   display_name: string;
   primary_color: string;
+  font_size: string; // "small" | "medium" | "large"
+};
+
+export type BotAppearance = {
+  display_name: string;
+  primary_color: string;
+  font_size: string;
 };
 
 export type Bot = {
   id: string;
   name: string;
+  website_url: string;
   config: BotConfig;
   site_key: string;
   allowed_domains: string[];
@@ -74,10 +81,10 @@ export function listBots(): Promise<Bot[]> {
   return apiFetch<Bot[]>("/bots");
 }
 
-export function createBot(name: string): Promise<Bot> {
+export function createBot(name: string, websiteUrl: string): Promise<Bot> {
   return apiFetch<Bot>("/bots", {
     method: "POST",
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, website_url: websiteUrl }),
   });
 }
 
@@ -117,6 +124,12 @@ export function listDocuments(botId: string): Promise<Document[]> {
   return apiFetch<Document[]>(`/bots/${botId}/documents`);
 }
 
+export function reloadDocument(botId: string, documentId: string): Promise<Document> {
+  return apiFetch<Document>(`/bots/${botId}/documents/${documentId}/reload`, {
+    method: "POST",
+  });
+}
+
 export function askBot(botId: string, question: string): Promise<{ answer: string }> {
   return apiFetch<{ answer: string }>(`/bots/${botId}/ask`, {
     method: "POST",
@@ -128,5 +141,12 @@ export function updateAllowedDomains(botId: string, allowedDomains: string[]): P
   return apiFetch<Bot>(`/bots/${botId}/allowed-domains`, {
     method: "PUT",
     body: JSON.stringify({ allowed_domains: allowedDomains }),
+  });
+}
+
+export function updateBotAppearance(botId: string, appearance: BotAppearance): Promise<Bot> {
+  return apiFetch<Bot>(`/bots/${botId}/appearance`, {
+    method: "PUT",
+    body: JSON.stringify(appearance),
   });
 }

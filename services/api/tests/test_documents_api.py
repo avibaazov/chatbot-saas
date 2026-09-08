@@ -13,6 +13,11 @@ from tests.integration_helpers import purge_test_data, reset_db_client
 USER_A = "pytest_docs_user_a"
 USER_B = "pytest_docs_user_b"
 
+# See test_bots_api.WEBSITE_URL — loopback discard port, so the create_bot auto-ingestion
+# fails fast and doesn't reach the network. Tests that monkeypatch fetch_url override that
+# too, which is harmless (the seed document just succeeds/fails alongside the real one).
+WEBSITE_URL = "http://127.0.0.1:9/"
+
 
 @pytest.fixture(autouse=True)
 async def _clean():
@@ -28,10 +33,14 @@ def _client_as(clerk_user_id: str) -> AsyncClient:
     return AsyncClient(transport=ASGITransport(app=dashboard_app), base_url="http://test")
 
 
+async def _create_bot(client: AsyncClient, name: str):
+    resp = await client.post("/bots", json={"name": name, "website_url": WEBSITE_URL})
+    return resp.json()["id"]
+
+
 async def test_create_document_ingests_synchronously_and_becomes_ready():
     async with _client_as(USER_A) as client:
-        resp = await client.post("/bots", json={"name": "Doc Bot"})
-        bot_id = resp.json()["id"]
+        bot_id = await _create_bot(client, "Doc Bot")
 
         resp = await client.post(
             f"/bots/{bot_id}/documents",
@@ -48,14 +57,13 @@ async def test_create_document_ingests_synchronously_and_becomes_ready():
 
 
 async def test_create_document_from_url_ingests_and_uses_page_title(monkeypatch):
-    async def fake_fetch(url):
+    async def fake_fetch(url, *args, **kwargs):
         return "Fig Care Guide", "water it weekly. " * 100
 
-    monkeypatch.setattr("app.routes.documents.fetch_url", fake_fetch)
+    monkeypatch.setattr("app.services.ingestion_jobs.fetch_url", fake_fetch)
 
     async with _client_as(USER_A) as client:
-        resp = await client.post("/bots", json={"name": "URL Bot"})
-        bot_id = resp.json()["id"]
+        bot_id = await _create_bot(client, "URL Bot")
 
         resp = await client.post(
             f"/bots/{bot_id}/documents/url", json={"url": "https://plants.example/care"}
@@ -68,14 +76,13 @@ async def test_create_document_from_url_ingests_and_uses_page_title(monkeypatch)
 
 
 async def test_create_document_from_url_marks_failed_on_fetch_error(monkeypatch):
-    async def bad_fetch(url):
+    async def bad_fetch(url, *args, **kwargs):
         raise Exception("host resolves to a non-public address")
 
-    monkeypatch.setattr("app.routes.documents.fetch_url", bad_fetch)
+    monkeypatch.setattr("app.services.ingestion_jobs.fetch_url", bad_fetch)
 
     async with _client_as(USER_A) as client:
-        resp = await client.post("/bots", json={"name": "URL Bot"})
-        bot_id = resp.json()["id"]
+        bot_id = await _create_bot(client, "URL Bot")
 
         resp = await client.post(
             f"/bots/{bot_id}/documents/url", json={"url": "http://169.254.169.254/latest/meta-data"}
@@ -87,8 +94,7 @@ async def test_create_document_from_url_marks_failed_on_fetch_error(monkeypatch)
 
 async def test_create_document_with_empty_text_marks_failed():
     async with _client_as(USER_A) as client:
-        resp = await client.post("/bots", json={"name": "Doc Bot"})
-        bot_id = resp.json()["id"]
+        bot_id = await _create_bot(client, "Doc Bot")
 
         resp = await client.post(
             f"/bots/{bot_id}/documents", json={"filename": "empty.txt", "text": "   "}
@@ -100,8 +106,7 @@ async def test_create_document_with_empty_text_marks_failed():
 
 async def test_list_documents_returns_uploaded_docs():
     async with _client_as(USER_A) as client:
-        resp = await client.post("/bots", json={"name": "Doc Bot"})
-        bot_id = resp.json()["id"]
+        bot_id = await _create_bot(client, "Doc Bot")
 
         await client.post(
             f"/bots/{bot_id}/documents", json={"filename": "a.txt", "text": "some content here"}
@@ -113,13 +118,46 @@ async def test_list_documents_returns_uploaded_docs():
         resp = await client.get(f"/bots/{bot_id}/documents")
         assert resp.status_code == 200
         filenames = {d["filename"] for d in resp.json()}
-        assert filenames == {"a.txt", "b.txt"}
+        # plus the URL seed document create_bot adds
+        assert {"a.txt", "b.txt"} <= filenames
+
+
+async def test_reload_document_rechunks_a_url_document(monkeypatch):
+    text_versions = iter(["first revision. " * 80, "second revision, longer now. " * 80])
+
+    async def fake_fetch(url, *args, **kwargs):
+        return "Care Guide", next(text_versions)
+
+    monkeypatch.setattr("app.services.ingestion_jobs.fetch_url", fake_fetch)
+
+    async with _client_as(USER_A) as client:
+        bot_id = await _create_bot(client, "Reload Bot")
+
+        docs = (await client.get(f"/bots/{bot_id}/documents")).json()
+        seed = next(d for d in docs if d["url"])
+        assert seed["status"] == "ready"
+
+        resp = await client.post(f"/bots/{bot_id}/documents/{seed['id']}/reload")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ready"
+
+
+async def test_reload_rejects_a_non_url_document():
+    async with _client_as(USER_A) as client:
+        bot_id = await _create_bot(client, "Reload Bot")
+        text_doc = (
+            await client.post(
+                f"/bots/{bot_id}/documents", json={"filename": "a.txt", "text": "hello there"}
+            )
+        ).json()
+
+        resp = await client.post(f"/bots/{bot_id}/documents/{text_doc['id']}/reload")
+        assert resp.status_code == 400
 
 
 async def test_documents_route_respects_bot_ownership():
     async with _client_as(USER_A) as client:
-        resp = await client.post("/bots", json={"name": "Not yours"})
-        bot_id = resp.json()["id"]
+        bot_id = await _create_bot(client, "Not yours")
 
     async with _client_as(USER_B) as client:
         resp = await client.post(

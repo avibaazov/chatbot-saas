@@ -2,29 +2,41 @@ import { auth } from "@clerk/nextjs/server";
 import Link from "next/link";
 
 import { API_BASE_URL, getBot, listDocuments, WIDGET_SCRIPT_URL } from "@/lib/api";
-import { ChatTester } from "./ChatTester";
-import {
-  addAllowedDomainAction,
-  ingestUrlAction,
-  removeAllowedDomainAction,
-  uploadDocumentAction,
-} from "./actions";
+import { CopyButton } from "./CopyButton";
+import { WidgetMount } from "./WidgetMount";
+import { reloadDocumentAction, updateAppearanceAction } from "./actions";
 
-const STATUS_COLOR: Record<string, string> = {
-  pending: "text-muted",
-  processing: "text-amber-500",
-  ready: "text-emerald-500",
-  failed: "text-red-500",
+// How far up the widget sits on this page, so its bubble clears the site footer. Only the
+// dashboard preview passes this; real embeds get the default corner position.
+const PREVIEW_OFFSET_BOTTOM = 72;
+
+const fieldClass =
+  "w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none focus:border-accent";
+
+const STATUS_PILL: Record<string, string> = {
+  pending: "bg-surface-muted text-muted",
+  processing: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  ready: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  failed: "bg-red-500/10 text-red-600 dark:text-red-400",
 };
+
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
+}
 
 export default async function BotDetailPage({ params }: PageProps<"/dashboard/[botId]">) {
   await auth.protect();
 
   const { botId } = await params;
   const [bot, documents] = await Promise.all([getBot(botId), listDocuments(botId)]);
-  const boundUpload = uploadDocumentAction.bind(null, botId);
-  const boundIngestUrl = ingestUrlAction.bind(null, botId);
-  const boundAddDomain = addAllowedDomainAction.bind(null, botId);
+
+  const readyCount = documents.filter((d) => d.status === "ready").length;
+  const siteDoc = documents.find((d) => d.url && d.url === bot.website_url);
+  const host = hostOf(bot.website_url);
 
   const embedSnippet = `<script
   src="${WIDGET_SCRIPT_URL}"
@@ -34,154 +46,146 @@ export default async function BotDetailPage({ params }: PageProps<"/dashboard/[b
 ></script>`;
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-10 px-6 py-12">
-      <div>
+    <div className="mx-auto w-full max-w-3xl space-y-6 px-6 py-10">
+      <header className="space-y-2">
         <Link href="/dashboard" className="text-sm text-muted hover:text-foreground">
           ← All bots
         </Link>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight">{bot.name}</h1>
-        <p className="mt-1 break-all font-mono text-xs text-muted">
-          site key: {bot.site_key}
+        <h1 className="text-2xl font-semibold tracking-tight">{bot.name}</h1>
+        <p className="text-sm text-muted">
+          {documents.length === 0
+            ? "No sources yet."
+            : `${readyCount} of ${documents.length} source${
+                documents.length === 1 ? "" : "s"
+              } ready`}
+          {" · "}
+          <span>live preview in the bottom-right corner</span>
         </p>
-      </div>
+      </header>
 
-      <section>
-        <h2 className="mb-3 font-medium">Training material</h2>
-
-        <form
-          action={boundIngestUrl}
-          className="mb-3 space-y-2 rounded-xl border border-border bg-surface p-4"
-        >
-          <p className="text-sm font-medium">Train on a website</p>
-          <p className="text-xs text-muted">
-            We fetch the page, pull out the readable text, and index it. Pages that render
-            with JavaScript may not have extractable content.
-          </p>
-          <div className="flex gap-2">
-            <input
-              name="url"
-              type="url"
-              placeholder="https://example.com/faq"
-              required
-              className="flex-1 rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted focus:border-accent"
-            />
-            <button
-              type="submit"
-              className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-opacity hover:opacity-90"
-            >
-              Fetch &amp; train
-            </button>
-          </div>
-        </form>
-
-        <form
-          action={boundUpload}
-          className="mb-4 space-y-2 rounded-xl border border-border bg-surface p-4"
-        >
-          <p className="text-sm font-medium">Paste text</p>
-          <input
-            name="filename"
-            placeholder="Filename (e.g. faq.txt)"
-            required
-            className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted focus:border-accent"
-          />
-          <textarea
-            name="text"
-            placeholder="Paste the content to train on…"
-            required
-            rows={4}
-            className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted focus:border-accent"
-          />
-          <button
-            type="submit"
-            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-opacity hover:opacity-90"
-          >
-            Upload
-          </button>
-        </form>
+      <section className="rounded-2xl border border-border bg-surface p-6">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold">Sources</h2>
+          {siteDoc && (
+            <form action={reloadDocumentAction.bind(null, botId, siteDoc.id)}>
+              <button
+                type="submit"
+                className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-accent hover:text-foreground"
+              >
+                Re-crawl
+              </button>
+            </form>
+          )}
+        </div>
 
         {documents.length === 0 ? (
-          <p className="text-sm text-muted">No documents added yet.</p>
+          <p className="text-sm text-muted">
+            Nothing ingested yet — ingestion runs in the background after a bot is created.
+          </p>
         ) : (
           <ul className="space-y-2">
             {documents.map((doc) => (
               <li
                 key={doc.id}
-                className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+                className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm"
               >
                 <span className="min-w-0">
-                  <span className="block truncate">{doc.filename}</span>
-                  {doc.url && (
-                    <span className="block truncate text-xs text-muted">{doc.url}</span>
-                  )}
+                  <span className="block truncate">{doc.url ?? doc.filename}</span>
                   {doc.error && (
                     <span className="block truncate text-xs text-red-500">{doc.error}</span>
                   )}
                 </span>
-                <span className={STATUS_COLOR[doc.status] ?? ""}>{doc.status}</span>
+                <span
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
+                    STATUS_PILL[doc.status] ?? "bg-surface-muted text-muted"
+                  }`}
+                >
+                  {doc.status}
+                </span>
               </li>
             ))}
           </ul>
         )}
       </section>
 
-      <section>
-        <ChatTester botId={botId} />
-      </section>
+      <section className="rounded-2xl border border-border bg-surface p-6">
+        <h2 className="mb-4 text-sm font-semibold">Appearance</h2>
 
-      <section>
-        <h2 className="mb-3 font-medium">Allowed domains</h2>
-        <p className="mb-3 text-sm text-muted">
-          The embed snippet below only works from these domains — the API checks the
-          request&apos;s origin against this list before answering.
-        </p>
-        <form action={boundAddDomain} className="mb-3 flex gap-2">
-          <input
-            name="domain"
-            placeholder="example.com or localhost:3000"
-            required
-            className="flex-1 rounded-lg border border-border bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted focus:border-accent"
-          />
-          <button
-            type="submit"
-            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-opacity hover:opacity-90"
-          >
-            Add
-          </button>
+        <form
+          action={updateAppearanceAction.bind(null, botId)}
+          className="grid gap-4 sm:grid-cols-3"
+        >
+          <label className="flex flex-col gap-1.5 text-xs font-medium text-muted sm:col-span-1">
+            Display name
+            <input
+              name="display_name"
+              defaultValue={bot.config.display_name}
+              maxLength={40}
+              required
+              className={fieldClass}
+            />
+          </label>
+
+          <label className="flex flex-col gap-1.5 text-xs font-medium text-muted">
+            Primary color
+            <input
+              name="primary_color"
+              type="color"
+              defaultValue={bot.config.primary_color}
+              className="h-9 w-full cursor-pointer rounded-lg border border-border bg-transparent px-1"
+            />
+          </label>
+
+          <label className="flex flex-col gap-1.5 text-xs font-medium text-muted">
+            Font size
+            <select name="font_size" defaultValue={bot.config.font_size} className={fieldClass}>
+              <option value="small">Small</option>
+              <option value="medium">Medium</option>
+              <option value="large">Large</option>
+            </select>
+          </label>
+
+          <div className="sm:col-span-3">
+            <button
+              type="submit"
+              className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-opacity hover:opacity-90"
+            >
+              Save
+            </button>
+          </div>
         </form>
-
-        {bot.allowed_domains.length === 0 ? (
-          <p className="text-sm text-muted">
-            No domains allowed yet — the widget won&apos;t respond anywhere until you add one.
-          </p>
-        ) : (
-          <ul className="space-y-2">
-            {bot.allowed_domains.map((domain) => (
-              <li
-                key={domain}
-                className="flex items-center justify-between rounded-lg border border-border bg-surface px-3 py-2 text-sm"
-              >
-                <span className="font-mono">{domain}</span>
-                <form action={removeAllowedDomainAction.bind(null, botId, domain)}>
-                  <button
-                    type="submit"
-                    className="text-muted transition-colors hover:text-red-500"
-                  >
-                    Remove
-                  </button>
-                </form>
-              </li>
-            ))}
-          </ul>
-        )}
       </section>
 
-      <section>
-        <h2 className="mb-3 font-medium">Embed on your site</h2>
-        <pre className="overflow-x-auto rounded-xl border border-border bg-surface-muted p-4 font-mono text-xs leading-6">
+      <section className="rounded-2xl border border-border bg-surface p-6">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold">Embed</h2>
+            <p className="mt-1 text-xs text-muted">
+              Paste before <code>&lt;/body&gt;</code>
+              {host && (
+                <>
+                  {" "}
+                  on <span className="font-mono">{host}</span>
+                </>
+              )}
+              .
+            </p>
+          </div>
+          <CopyButton value={embedSnippet} label="Copy" />
+        </div>
+
+        <pre className="overflow-x-auto rounded-lg border border-border bg-surface-muted p-4 font-mono text-xs leading-6">
           {embedSnippet}
         </pre>
       </section>
+
+      <WidgetMount
+        siteKey={bot.site_key}
+        apiBase={API_BASE_URL}
+        scriptUrl={WIDGET_SCRIPT_URL}
+        offsetBottom={PREVIEW_OFFSET_BOTTOM}
+        reloadKey={`${bot.config.display_name}|${bot.config.primary_color}|${bot.config.font_size}`}
+      />
     </div>
   );
 }

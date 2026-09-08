@@ -45,9 +45,14 @@ def _widget_client() -> AsyncClient:
     return AsyncClient(transport=ASGITransport(app=widget_app), base_url="http://widget-test")
 
 
+WEBSITE_URL = "http://127.0.0.1:9/"
+
+
 async def _create_bot_with_allowed_domain(domain: str) -> dict:
     async with _dashboard_client_as(USER_A) as client:
-        resp = await client.post("/bots", json={"name": "Widget Bot"})
+        resp = await client.post(
+            "/bots", json={"name": "Widget Bot", "website_url": WEBSITE_URL}
+        )
         bot = resp.json()
         resp = await client.put(
             f"/bots/{bot['id']}/allowed-domains", json={"allowed_domains": [domain]}
@@ -68,6 +73,18 @@ async def test_ask_from_allowed_origin_succeeds():
     assert resp.headers["access-control-allow-origin"] == "https://example.com"
 
 
+async def test_ask_from_a_subdomain_of_the_allowed_domain_succeeds():
+    bot = await _create_bot_with_allowed_domain("acme.com")
+
+    async with _widget_client() as client:
+        resp = await client.post(
+            f"/{bot['site_key']}/ask",
+            json={"question": "hi"},
+            headers={"Origin": "https://help.acme.com"},
+        )
+    assert resp.status_code == 200
+
+
 async def test_ask_from_disallowed_origin_is_rejected():
     bot = await _create_bot_with_allowed_domain("example.com")
 
@@ -81,18 +98,34 @@ async def test_ask_from_disallowed_origin_is_rejected():
     assert "access-control-allow-origin" not in resp.headers
 
 
-async def test_ask_with_no_allowed_domains_configured_is_rejected():
-    async with _dashboard_client_as(USER_A) as client:
-        resp = await client.post("/bots", json={"name": "No Domains Bot"})
-        bot = resp.json()
+async def test_ask_from_origin_not_in_allowlist_is_rejected():
+    bot = await _create_bot_with_allowed_domain("example.com")
 
     async with _widget_client() as client:
         resp = await client.post(
             f"/{bot['site_key']}/ask",
             json={"question": "hi"},
-            headers={"Origin": "https://example.com"},
+            headers={"Origin": "https://not-listed.com"},
         )
     assert resp.status_code == 403
+
+
+async def test_ask_from_first_party_dashboard_origin_is_always_allowed():
+    """The dashboard embeds the real widget as a live preview on the bot detail page, so
+    its own origin is accepted regardless of the bot's allow-list (see widget.py)."""
+    from app.core.config import get_settings
+
+    dashboard_origin = get_settings().cors_origins[0]
+    bot = await _create_bot_with_allowed_domain("example.com")  # dashboard origin NOT listed
+
+    async with _widget_client() as client:
+        resp = await client.post(
+            f"/{bot['site_key']}/ask",
+            json={"question": "hi"},
+            headers={"Origin": dashboard_origin},
+        )
+    assert resp.status_code == 200
+    assert resp.headers["access-control-allow-origin"] == dashboard_origin
 
 
 async def test_wildcard_allowed_domain_permits_any_origin():
@@ -167,6 +200,30 @@ async def test_widget_config_returns_display_settings():
     assert resp.status_code == 200
     body = resp.json()
     assert body["display_name"] == "Assistant"  # BotConfig default
+    assert body["font_size"] == "medium"  # BotConfig default
+
+
+async def test_widget_config_reflects_saved_appearance():
+    async with _dashboard_client_as(USER_A) as client:
+        bot = (
+            await client.post(
+                "/bots", json={"name": "Styled Bot", "website_url": WEBSITE_URL}
+            )
+        ).json()
+        await client.put(f"/bots/{bot['id']}/allowed-domains", json={"allowed_domains": ["example.com"]})
+        await client.put(
+            f"/bots/{bot['id']}/appearance",
+            json={"display_name": "Support", "primary_color": "#ff0066", "font_size": "large"},
+        )
+
+    async with _widget_client() as client:
+        resp = await client.get(
+            f"/{bot['site_key']}/config", headers={"Origin": "https://example.com"}
+        )
+    body = resp.json()
+    assert body["display_name"] == "Support"
+    assert body["primary_color"] == "#ff0066"
+    assert body["font_size"] == "large"
 
 
 async def test_rate_limit_kicks_in_after_threshold():

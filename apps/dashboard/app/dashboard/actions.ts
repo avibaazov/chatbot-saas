@@ -13,11 +13,15 @@ export async function createBotAction(formData: FormData) {
   await auth.protect();
 
   const name = String(formData.get("name") ?? "").trim();
+  const websiteUrl = String(formData.get("website_url") ?? "").trim();
   if (!name) {
     throw new Error("Bot name is required");
   }
+  if (!websiteUrl) {
+    throw new Error("Website URL is required");
+  }
 
-  await createBot(name);
+  await createBot(name, websiteUrl);
   revalidatePath("/dashboard");
 }
 

@@ -1,11 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { type MouseEvent, useState } from "react";
 
-export function CopyButton({ value, label = "Copy" }: { value: string; label?: string }) {
+export function CopyButton({
+  value,
+  label = "Copy",
+}: {
+  value: string;
+  label?: string;
+}) {
   const [copied, setCopied] = useState(false);
 
-  async function copy() {
+  async function copy(e: MouseEvent) {
+    // The button can live inside a <summary>; don't let the click toggle the <details>.
+    e.stopPropagation();
+    e.preventDefault();
     try {
       await navigator.clipboard.writeText(value);
       setCopied(true);

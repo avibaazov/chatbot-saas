@@ -9,20 +9,31 @@ import { createBot, deleteBot } from "@/lib/api";
 // own — a POST can hit a Server Action directly. Every action re-checks auth itself.
 // See node_modules/next/dist/docs/01-app/02-guides/server-actions.md § Security.
 
-export async function createBotAction(formData: FormData) {
+export type CreateBotState = { ok: boolean; error?: string };
+
+export async function createBotAction(
+  _prev: CreateBotState | null,
+  formData: FormData,
+): Promise<CreateBotState> {
   await auth.protect();
 
   const name = String(formData.get("name") ?? "").trim();
   const websiteUrl = String(formData.get("website_url") ?? "").trim();
   if (!name) {
-    throw new Error("Bot name is required");
+    return { ok: false, error: "Bot name is required" };
   }
   if (!websiteUrl) {
-    throw new Error("Website URL is required");
+    return { ok: false, error: "Website URL is required" };
   }
 
-  await createBot(name, websiteUrl);
+  try {
+    await createBot(name, websiteUrl);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Could not create bot" };
+  }
+
   revalidatePath("/dashboard");
+  return { ok: true };
 }
 
 export async function deleteBotAction(botId: string) {

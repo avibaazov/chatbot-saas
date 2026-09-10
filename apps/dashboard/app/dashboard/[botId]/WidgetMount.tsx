@@ -34,7 +34,9 @@ export function WidgetMount({
 
     return () => {
       script.remove();
-      document.querySelectorAll("[data-chatbot-widget]").forEach((el) => el.remove());
+      document
+        .querySelectorAll("[data-chatbot-widget]")
+        .forEach((el) => el.remove());
     };
   }, [siteKey, apiBase, scriptUrl, offsetBottom, reloadKey]);
 
